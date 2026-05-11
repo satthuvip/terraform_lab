@@ -1,0 +1,549 @@
+## 1 CÁC FILE TRONG TERRAFORM
+
+Ý nghĩa và chức năng của các file được sinh ra trong một số dự án terraform
+
+- ***.tf**: Chứa các khai báo tài nguyên cơ sở hạ tầng dưới dạng code
+
+- **".terraform \ providers \ registry.terraform.io \ hashicorp \ aws \ 5.42.0 \ windows_386 \ terraform-provider-aws_v5.44.0_x5.exe"**: file plugin để terraform tương tác với Provider và quản lý tài nguyên theo cấu hình terraform.
+
+- **terraform.tfstate**: hiển thị trạng thái hiện tại của cơ sở hạ tầng
+
+- **terraform.tfstate.backup**: file backup của tfstate sử dụng restore khi cần thiết
+
+- **.terraform.lock.hcl**: sử dụng để khóa version của Provider và module đang được sử dụng.
+
+- **terraform.tfstate.lock.info**: khóa state, đảm bảo tại 1 thời điểm thực hiện thay đổi state chỉ có 1 tiến trình hoặc 1 người được sửa đổi
+
+Những câu lệnh (command) trong terraform hay được sử dụng
+
+- **terraform init**: Khởi tạo môi trường bằng cách cài đặt các plugin và module cần thiết cho Provider
+- **terraform fmt**: định dạng lại cấu hình theo chuẩn, giúp code dễ nhìn hơn
+- **terraform validate:** kiểm tra tính hợp lệ của code, block trong cấu hình.
+- **terraform plan**: xem trước những action sẽ thực hiện với Provider
+- **terraform apply**: thực hiện khởi tạo tài nguyên trên Provider
+- **terraform destroy**: xóa các tài nguyên đã khởi tạo
+
+## 2 META ARGUMENT
+
+Meta argument là các argument đặc biệt mà terraform sẽ hiểu trực tiếp, không thuộc provider nào.
+
+Sử dụng các block và module để kiểm soát hành vi của chúng hoặc ảnh hưởng đến quá trình cung cấp cơ sở hạ tầng. Cung cấp các tùy chọn cấu hình bổ sung ngoài các đối số dành riêng cho tài nguyên thông thường.
+
+Terraform định nghĩa các meta argument như: count, for_each, depends_on, lifecycle, provider.
+
+- **count**: dùng để tạo nhiều resource giống nhau, hoặc bật/tắt resource.
+
+  - Được gán giá trị là số nguyên dương: count = 4
+  - count.index bắt đầu từ 0
+
+  ```hc
+  resource "aws_instance" "server" {
+  	count = 4
+  	
+  	ami		      = "ami-a1b2c3d4"
+  	instance_type = "t2.micro"
+  	
+  	tags = {
+  		Name = "Server ${count.index}"
+  	}
+  }
+  ```
+
+- **for_each:** dùng để tạo nhiều resource giống nhau dựa trên map hoặc set, thường dễ quản lý hơn count khi mỗi resource có tên riêng.
+
+  - Có 2 thuộc tính trong for_each
+    - each.key: giá trị là key của 1 cặp key-value
+    - each.value: giá trị là value của 1 cặp key-value
+
+  ```
+  variable "servers" {
+    default = {
+      web1 = "m1.small"
+      web2 = "m1.medium"
+    }
+  }
+  
+  resource "openstack_compute_instance_v2" "vm" {
+    for_each = var.servers
+  
+    name      = each.key
+    flavor_id = each.value
+    image_id  = var.image_id
+  }
+  ```
+
+- **depends_on**: dùng để chỉ định sự phụ thuộc giữa các tài nguyên. Đảm bảo rằng một tài nguyên được tạo hoặc cập nhật sau tài nguyên khác. 
+
+  - Thông thường terraform sẽ tự hiểu dependency qua reference
+
+  ```
+  resource "aws_instance" "web_server" {
+  	ami	            = "ami-12345678"
+  	instance_type   = "t2.micro"
+  	count 			= 1
+  }
+  resource "aws_security_group" "web_security_group" {
+  	name            = "web_security_group"
+  	description     = "Web server security group"
+  	depends_on = [aws_instance.web_server]	
+  
+  ```
+
+- **lifecycle**: là thành phần cấu hình resource, cho phépterraform quản lí các đối tượng được tạo ra, thay đổi hoặc hủy bỏ.
+
+  + create_before_desroy: Tạo tài nguyên thay thế trước khi xóa tài nguyên cũ.
+
+  + ignore_changes: Chỉ định các thuộc tính mà terraform sẽ bỏ qua khi thực hiện các thay đổi. Hữu ích khi không muốn terraform quản lý một số thuộc tính resource.
+
+  + prevent_destroy: Terraform sẽ không cho phép xóa resource. Hữu ích trong trường hợp muốn bảo vệ một resource quan trọng khỏi bị vô tình xóa.
+
+  + replace_triggered_by: Cho phép xác định các resource hoặc điều kiện sẽ gây ra việc thay thế resource hiện tại. Hữu ích khi muốn thêm một trigger phụ để gây ra thay đổi resource.
+
+
+```
+resource "openstack_compute_instance_v2" "db" {
+  name      = "db-01"
+  image_id  = var.image_id
+  flavor_id = var.flavor_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+```
+
+- provider: dùng để chọn provider configuration cụ thể
+
+```
+provider "openstack" {
+  alias = "region1"
+  region = "RegionOne"
+}
+
+provider "openstack" {
+  alias = "region2"
+  region = "RegionTwo"
+}
+
+resource "openstack_compute_instance_v2" "vm_region1" {
+  provider = openstack.region1
+
+  name      = "vm-region1"
+  image_id  = var.image_id
+  flavor_id = var.flavor_id
+}
+```
+
+## 2. DATA RESOURCE
+
+Data source dùng để đọc thông tin hạ tầng đã tồn tại thay vì tạo mới resource, được miêu tả bằng block Data
+
+Mỗi resource có 1 data resource riêng để tham chiếu. 
+
+Cú pháp data resource riêng data.<type>.<name>.<attribute> để lấy dữ liệu mong muốn
+
+```
+data "aws_instance" "name" {
+	filter {
+		name = "tag-name"
+		values = ["VM-04"]
+		}
+	}
+output "name" {
+	value = data.aws_instance.name.ami
+	}
+```
+
+## **3.VARIABLE**
+
+Trong terraform, variable là biến đầu vào dùng để truyền giá trị vào code Terraform, giúp code linh hoạt hơn và không phải hardcode.
+
+**Local values**: là biến nội bộ dùng trong chính module hiện tại 
+
+- Được miêu tả bằng block *"locals"*
+- Nó là nhóm các cặp key-value được sử dụng trong cấu hình
+- Tránh lặp lại cùng một giá trị hoặc biểu thức nhiều lần trong 1 cấu hình
+- Sử dụng cú pháp local.<Name> để tham chiếu
+
+```
+locals {
+	ami = "ami-123456789" 
+	type = "t2.micro"
+	tags = {
+		Name = "EC2"
+        Department = "IT"
+        Owner      = "Huan"
+		}
+	}
+	
+resource "aws_instance" "myvm" {
+	ami = local.ami
+	instance_type = local.type
+	tags          = local.tags
+}
+```
+
+==> dùng local_value để tránh trung lặp code trong module.
+
+**Input variable:**
+
+- Được miêu tả bằng block *"variable"* 
+- Sử dụng để truyền các giá trị nhất định từ bên ngoài vào cấu hình
+- Input variable đóng vai trò như đầu vào cho các module
+- sử dụng cú pháp để tham chiếu: var.<NAME>
+- Khai báo giá trị input variable
+  - Có thể khai báo trực tiếp trong file config 
+  - Khai báo trong câu lệnh sau khi chạy "terraform apply"
+  - Khai báo trong file *.tfvars
+  - Khai báo trong file *auto.tfvar
+
+```
+variable "demo"{
+	type = string
+	description = ""
+	default = ""
+}
+resource "aws_instance" "myvm" {
+	ami				= var.ami
+	instance_type	= var.type
+	tags			= var.tags
+}
+
+```
+
+**Output Value:**
+
+- Được miêu tả bằng block *"output"*
+- Output sử dụng để lấy thông tin từ các resource đã triển khai
+- Giá trị trong block output sẽ được in ra sau khi chạy terraform apply hoặc có thể sử dụng commant terraform out
+
+```
+output "instance_ami" {
+	value = aws_instance.web.ami
+	}
+output "instance_state" {
+	value = aws_instance.web.instance_state
+	description = "Trang thai hien tai của vm web"
+	}
+output "Public_ip" {
+	value = aws_instance.web.public_ip
+	sensitive = true
+	} 
+```
+
+## 4. MODULE
+
+Terraform Module là một đơn vị đóng gói tái sử dụng trong Terraform, giúp tổ chức code cơ sở hạ tầng phức tạp thành các thành phần nhỏ hơn, dễ quản lý và dễ sử dụng lại.
+
+Module được mô tả bằng block *"module"* 
+
+Các loại module:
+
+- Local Module
+- Remote Module
+
+Local Module là những module tự phát triển, lưu tại máy của mình
+
+```
+module "vpc" {
+	source = "./module/vpc"
+	cidr_block = "10.0.0.0/10"
+}
+```
+
+Remote Module là những module được lưu trữ trên internet như: git, terraform registry ....
+
+```
+module "vpc" {
+	source  = "terraform-aws-modules/vpc"
+	version = "3.0.0"
+	name    = "example-vpc"
+	cidr_block = "10.0.0.0/16"
+	tags = {
+		Name = "example-vpc"
+	  }
+	}
+```
+
+## 5 BACKEND
+
+Backend là nơi terraform lưu trữ file state. State file là file ghi lại hạ tầng mà terraform đang quản lý như bao nhiêu EC2, các ID của VPC ..
+
+Mặc định, Terraform lưu state ở local: "terraform.tfstate".
+
+Standard Backend là loại backend lưu trữ file state trong kho lưu trưc đám mây như: Amazon S3, GCP ...
+
+![terraform_standard_backend](/home/nuno/Downloads/package/terraform_standard_backend.png)Ưu điểm:
+
+- An toàn hơn local backend do có tính năng sao lưu và phục hồi.
+- Cho phép nhiều người dùng truy cập và sửa đổi file state cùng lúc
+- Hỗ trợ khóa state để bảo mật dữ liệu
+
+Nhược điểm:
+
+- Cần cấu hình thêm để kết nối với kho lưu trữ đám mây
+- Có thể phát sinh chi phí nếu sử dụng dịch vụ lưu trữ đám mây trả phí
+
+Remote backend là loại dịch vụ backend của bên thứ 2 như Terraform Cloud, HashiCorp Enterprise mà terraform runtime thực thi ở remote server.
+
+- Ưu điểm:
+  - Cung cấp nhiều tính năng nâng cao như quản lý tập truy cập người dùng, tự động hóa triển khai, giám sát trạng thái
+  - Dễ dàng sử dụng và quản lý
+  - Có thể tích hợp với các công cụ CI/CD khác
+- Nhược điểm:
+  - Cần tạo tài khoản và trả phí cho dịch vụ backend
+  - Khả năng tùy chỉnh hạn chế hơn so với Standard Backend
+
+Lựa chọn loại backend nào:
+
+- Local Backend: Phù hợp cho các dự án nhỏ, cá nhân hoặc để thử nghiệm
+- Standard Backend: Phù hợp các dự án vừa, lớn cần cộng tác với nhóm và lưu trữ dữ liệu an toàn.
+- Remote Backend: Phù hợp với các tổ chức lớn cần nhiều tính năng nâng cao và khả năng quản lý tập trung.
+
+## 6.TERRAFORM PROVISIONER
+
+<u>Định nghĩa:</u>  Cho phép thực hiện lệnh hoặc script trên máy local hoặc remote machine hoặc cũng có thể truyền file giữa local và remote machine.
+
+<u>Mục đích:</u> Thực hiện cấu hình, cài đặt phần mềm, khởi động dịch vụ hoặc thực hiện bất kỳ tác vụ nào khác cần thiết để tài nguyên hoạt động đúng như mong muốn.
+
+Nên sử dụng TF-Provisioner khi:
+
+- Cài đặt phần mềm. 
+  - Ví dụ: Cài đặt Nginx, Apache, Docker hoặc các công cụ khác trên máy chủ.
+- Tạo người dùng/nhóm
+  - Thiết lập tài khoản người dùng/ nhóm trên hệ thống
+- Thay đổi cấu hình hệ thống
+  - Điều chỉnh các thiết lập hệ thống như file cấu hình, environment
+- Khởi động dịch vụ
+  - Start các dịch vụ như Mysql, PostgreSQL, Redis sau khi máy chỉ được tạo.
+
+### 6.1 LOCAL EXEC
+
+- Thực thi script hoặc lệnh trên máy cục bộ nơi chạy Terraform. 
+
+- Được miêu tả bằng block *provisoner "local-exec"{...}*
+
+Ví dụ:
+
+```
+resource "aws_instance" "my_vm" {
+	ami 	= var.ami
+	instance_type = var.instance_type
+	
+	provisioner "local-exec" {
+		command = "echo ${self.private_ip} >> private_ip.txt"
+		}
+	tag {
+		Name = var.name_tag,
+		}
+	}
+```
+
+### 6.2 REMOTE-EXEC
+
+- Các câu lệnh script được thực hiện trên remote machine
+- Được miêu tả bằng block *provisioner "remote-exec" {...}*
+
+- Các đối số:
+  - **inline**: danh sách câu lệnh
+  - ***script***: path to a local script
+  - **scripts**: path to a local scripts
+
+Ví dụ:
+
+```
+resource "aws_instance" "my_vm"{
+	provisioner "remote-exec"
+		connection {
+			type	= "ssh"
+            user	= "your_ssh_username"
+            private_key	= file("path/to/your/private_key.pem")
+            host	= self.public_ip
+        }
+        inline = [
+        	"sudo yum install wget unzip httpd -y",
+        	"sudo systemctl start httpd"
+        ]
+        script = "path/to/your/local/script.sh"
+        scripts = [
+        	"path/to/your/local/script1.sh",
+        	"path/to/yout/local/script2.sh"
+	}
+```
+
+### 6.3 FILE
+
+- Sử dụng để copy file hoặc thư mục từ local tới remote machine
+- Được miêu tả bằng block
+
+```
+provisioner "file" {...}
+```
+
+- Các đối số:
+  - source: đường dẫn tới file hoặc source folder
+  - destination: đường dẫn tới file hoặc thư mục đích
+  - content : (optional) nội dung của đích
+
+Ví dụ:
+
+```
+resource "cloudstack_instance" "web" {
+	provisioner "file" {
+		source = "conf/myapp.conf"
+		destination = "/etc/myapp.conf"
+		}
+	provisioner "file" {
+		content = "instance used: ${self.template}"
+		destination = "/tmp/file.log"
+		}
+}
+```
+
+## 7.ADVANCED TERRAFORM FEATURE
+
+### 7.1 IMPORT
+
+Định nghĩa: Terraform có thể nhập tài nguyên cơ sở hạ tầng hiện có EC2, VPC, S3, ... Điều này cho phép quản lý các tài nguyên được tạo bên ngoài terraform, đưa chúng về dưới sự quản lí của Terraform.
+
+Các sử dụng:
+
+- Sử dụng command
+
+```
+terraform import cloudstack_instance.bonlab <id_instance>
+```
+
+- Sử dụng block import (Terraform >= v1.5.0)
+
+```
+import {
+	to = cloudstack_instance.bonlab
+	id = "instance_id"
+}
+```
+
+- Cách hoạt động:
+  - Xác định tài nguyên cần import (loại resource, ID)
+  - Terraform đọc các thông tin tài nguyên từ Provider (Ví dụ: cloudstack)
+  - Terraform tạo một khối tài nguyên tương ứng trong terraform state
+  - Lưu ý:
+    - Terraform Import chit cập nhật state, không thay đổi tài nguyên thực tế
+
+### 7.2 TAINT
+
+Định nghĩa: Là một cơ chế cho phép đánh dấu một tài nguyên trong terraform state "bị lỗi"/ "cần thay thế". 
+
+Điều này có nghĩa là lần tiếp theo bạn chạy *terraform apply*, tài nguyên đó sẽ bị hủy và được tạo lại. 
+
+Cấu hình resource sẽ không thay đổi nhưng tài nguyên sẽ được thay thế.
+
+Cách hoạt động:
+
+- Khi một resource bị taint, terraform sẽ tự động hủy tài nguyên đó trong lần chạy tiếp theo 
+
+```
+terraform taint cloudstack_instance.bonlab
+```
+
+- Sau khi hủy, terraform sẽ tạo lại tài nguyên đó dựa trên cấu hình hiện tại
+
+### 7.3 UNTAINT
+
+Định nghĩa: Khi sử dụng terraform taint, terraform sẽ đánh dấu tài nguyên đó là cần thay thể trong lần apply tiếp theo. Tuy nhiên, nếu thay đổi ý định và không muốn thay đổi tài nguyên đó nữa, ta sử sụng lệnh terraform untaint để loại bỏ đánh dấu này.
+
+Các hoạt động:
+
+- Lệnh terraform untaint sẽ xóa thông tin taint khỏi terraform state
+
+```
+terraform untaint cloudstack_instance.bonlab
+```
+
+- Tài nguyên sẽ không còn bị đánh dấu là cần thay thế nữa
+- Khi chạy *terraform apply*, teraform sẽ không thực hiện việc hủy và tạo lại tài nguyên đó.
+
+### 7.4 REPLACE
+
+Định nghĩa: Là một flag được sử dụng với *terraform apply* hoặc *terraform plan* để đề xuất terraform tạo lại các tài nguyên cụ thể. Đây là cách an toàn hơn nhiều để thay thế tài nguyên.
+
+Cách hoạt động:
+
+- Review tài nguyên bị thay thể
+
+```
+terraform plan -replace="cloudstack_instance.bonlab"
+```
+
+- Sau khi xem trước các thay đổi, thực hiện apply để replace tài nguyên
+
+```
+terraform apply -replay="cloudstack_instance.bonlab"
+```
+
+### **7.5 OVERRIDE**
+
+Định nghĩa: Terraform override files, nó cung cấp một cách để ghi đè lên các phần cụ thể của cấu hình gốc mà không cần sửa đổi file gốc.
+
+Terraform chỉ định file ghi đè là bất kỳ file nào có cấu trúc tên file kết thúc là *_override.tf* hoặc *_override.tf.json*. 
+
+Ngoài ra những file có tên chính xác *override.tf* hoặc *override.tf.json* cũng là file được chỉ định có thể ghi đè.
+
+Ví dụ: File cấu hình **main.tf* để tạo một máy chủ EC2, thay đổi loại instance của EC2 trong môi trường production. Ta có thể tạo một file *production_override.tf để ghi đè lên giá trị của thuộc tính instance_type.  
+
+Cách hoạt động:
+
+- Terraform sẽ xác định ra block chứa tài nguyên đang tồn tại và cần ghi đè.
+- Thực hiện hợp nhất và ghi đè lên block có tài nguyên đã tồn tại. Các thuộc tính bên trong khối override sẽ ghi đè lên các thuộc tính có cùng tên trong khối gốc. Các thuộc tính khác nhau sẽ được giữ nguyên và các khối lồng nhau trong khối override sẽ thay thế hoàn toàn các khối lồng nhau tương ứng trong khối gốc.
+- Khối được hợp nhất thu được vẫn phải tuân thủ mọi quy tắc xác thực áp dụng cho loại khối nhất định.
+
+Ví dụ:
+
+```
+#main.tf
+resource "aws_instance" "web_server" {
+	ami		= "ami-123456789"
+	instance_type = "t2.micro"
+	tags = {
+		Name = "Web-server-prod"
+	}
+}
+```
+
+ 
+
+```
+#override.tf
+resource "aws_instance" "web_server" {
+	instance_type = "t3.micro" //Ghi đè thuộc tính instance_type
+	tags = 
+		Environment = "dev" //Thêm thuộc tính mới vào block tags
+	}
+}
+```
+
+Đối với việc có nhiều file override thì:
+
+- Terraform sẽ ưu tiên áp dụng chúng theo thứ tự từ điển
+
+Ví dụ: **application_override.tf** sẽ được áp dụng trước **database_override.tf**
+
+- Nếu có xung đột giữa các override files, giá trị trong file được áp dụng sau sẽ được ưu tiên.
+
+## 8. DEBUGGING & LOGGING
+
+Degbug:
+
+- Quá trình xác định, phân tích và loại bỏ các lỗi trong cấu hình Terraform
+
+- Các công cụ và kỹ thuật để debug terraform:
+  - Sử dụng biến môi trường để bật log chi tiết
+  - Phân tích log để tìm ra nguyên nhân gây lỗi
+- Các biến môi trường hỗ trợ debug:
+  - *TF_LOG*: Cấp độ để hiển thị.  Các giá trị có thể là TRACE, DEBUG, INFO, WARN, ERROR
+  - *TF_LOG_PATH*: Đường dẫn tệp để ghi log. Điều này giúp ghi lại log vào một tệp cụ thể thay vì hiể thị trên màn hình/
+
+Logging:
+
+- Quá trình ghi lại các hoạt động và sự kiện xảy ra ttrong quá trình thực thi Terraform, giúp chúng ta dễ dàng theo dõi và phân tích.
+
